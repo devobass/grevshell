@@ -94,7 +94,7 @@ grevshell/
 ```
 
 ## TO-DO
-- [] File download/upload.
+- [ ] File download/upload.
 
 ---
 
