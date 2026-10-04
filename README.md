@@ -127,9 +127,10 @@ silently, except that a failed file read/write ends the session.
 
 - [x] File download/upload (`/GET` and `/SEND`).
 - [ ] Chunk large files instead of sending each one in a single packet.
-- [ ] Replace the fixed 32-byte filename field with a length-prefixed one.
-- [ ] Add an explicit way to end a session from the client, and stop the
-      client looping on stdin EOF.
+- [X] Replace the fixed 32-byte filename field with a length-prefixed one.
+- [X] Add an explicit way to end a session from the client, and stop the client looping on stdin EOF.
+- [ ] Authentication.
+- [ ] Actual cryptography security. 
 
 ---
 
