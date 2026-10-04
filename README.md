@@ -48,17 +48,6 @@ Two binaries, one shared library. Everything that touches the wire — framing,
 encryption, headers — lives in `grevcore`, so the two sides can't disagree about
 the format.
 
-```mermaid
-flowchart TB
-    C["grevclient/client.go<br/>prompt loop · /SEND · /GET · /EXIT"]
-    S["main.go<br/>listen · accept · dispatch on header"]
-    K["grevcore<br/>DeriveKey · AesEncrypt / AesDecrypt<br/>SendPacket / ReceivePacket · headers.go"]
-
-    C <-->|"TCP localhost:9999<br/>4-byte length prefix + AES-CBC body"| S
-    C --- K
-    S --- K
-```
-
 | Path | Role |
 | --- | --- |
 | `main.go` | Server: listens, accepts, dispatches packets |
@@ -103,24 +92,25 @@ included — and is checked against `MaxPacketSize` (0xFFFF) on receipt.
 ```mermaid
 packet
 title Frame: every message after the handshake
-0-31: "length (LE uint32): ciphertext byte count"
-32-159: "IV: 16 random bytes, fresh per packet"
-160-287: "AES-CBC ciphertext: PKCS#7-padded body, multiple of 16 B (variable)"
+0-4: "length: 4 B, LE uint32, ciphertext byte count"
+5-20: "IV: 16 B, random, fresh per packet"
+21-36: "AES-CBC ciphertext: PKCS#7-padded body, multiple of 16 B (variable)"
 ```
 
 ### 3. Bodies
 
 A body always starts with an 8-byte ASCII header that selects the operation
-(`grevcore/headers.go`). Field widths marked *(variable)* are illustrative; only
-the length-prefixed name field is actually read back.
+(`grevcore/headers.go`). Offsets below are byte offsets. Fields marked
+*(variable)* are drawn at an illustrative width; only the name field is
+genuinely length-prefixed, and it is the only one read back off the wire.
 
 **`GREVEXEC` — client → server: run a shell command**
 
 ```mermaid
 packet
 title Body: GREVEXEC
-0-63: "GREVEXEC"
-64-159: "command line, trailing newline included (variable)"
+0-8: "GREVEXEC: 8 B header"
+9-20: "command line, trailing newline included (variable)"
 ```
 
 The server runs it through `/usr/bin/sh -c`, merges stdout and stderr, and
@@ -131,10 +121,10 @@ replies with **raw output and no header** — the client prints it as-is.
 ```mermaid
 packet
 title Body: GREVRCVF
-0-63: "GREVRCVF"
-64-79: "name length (LE uint16, n)"
-80-143: "name (n bytes)"
-144-271: "file contents (variable)"
+0-8: "GREVRCVF: 8 B header"
+9-10: "name length: 2 B, LE uint16 (n)"
+11-18: "name: n bytes"
+19-34: "file contents (variable)"
 ```
 
 The server writes the contents to `filepath.Base(name)` with mode `0600` in its
@@ -145,9 +135,9 @@ own working directory. No reply; a failed write ends the session.
 ```mermaid
 packet
 title Body: GREVSNDF request
-0-63: "GREVSNDF"
-64-79: "name length (LE uint16, n)"
-80-143: "name (n bytes)"
+0-8: "GREVSNDF: 8 B header"
+9-10: "name length: 2 B, LE uint16 (n)"
+11-18: "name: n bytes"
 ```
 
 The server reads the name verbatim — no path filtering — and replies with the
@@ -156,9 +146,9 @@ name echoed back plus the contents, again **without a header**:
 ```mermaid
 packet
 title Reply: GREVSNDF response
-0-31: "name length (LE uint16, n)"
-32-95: "name (n bytes)"
-96-223: "file contents (variable)"
+0-2: "name length: 2 B, LE uint16 (n)"
+3-10: "name: n bytes"
+11-26: "file contents (variable)"
 ```
 
 The client strips the echoed name and writes `filepath.Base(name)` locally.
