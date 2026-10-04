@@ -93,6 +93,9 @@ grevshell/
 └── go.mod
 ```
 
+## TO-DO
+- [] File download/upload.
+
 ---
 
 ## How It Works
