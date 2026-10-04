@@ -12,12 +12,13 @@ import (
 	"github.com/zenazn/pkcs7pad"
 )
 
+
 var HARDCODED_SEED = []byte("thisisa16bytekey")
 
 func DeriveKey(c net.Conn) ([]byte, error) {
-	seed_1 := make([]byte, 16)
-	seed_2 := make([]byte, 16)
-	key := make([]byte, 16)
+	seed_1	:= make([]byte, 16)
+	seed_2	:= make([]byte, 16)
+	key	:= make([]byte, 16)
 
 	rand.Read(seed_1)
 	c.Write(seed_1)
