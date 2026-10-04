@@ -42,77 +42,128 @@ Authorization from the system owner is a minimum, not a safe harbour.
 
 ---
 
+## Structure
+
+Two binaries, one shared library. Everything that touches the wire — framing,
+encryption, headers — lives in `grevcore`, so the two sides can't disagree about
+the format.
+
+```mermaid
+flowchart TB
+    C["grevclient/client.go<br/>prompt loop · /SEND · /GET · /EXIT"]
+    S["main.go<br/>listen · accept · dispatch on header"]
+    K["grevcore<br/>DeriveKey · AesEncrypt / AesDecrypt<br/>SendPacket / ReceivePacket · headers.go"]
+
+    C <-->|"TCP localhost:9999<br/>4-byte length prefix + AES-CBC body"| S
+    C --- K
+    S --- K
+```
+
+| Path | Role |
+| --- | --- |
+| `main.go` | Server: listens, accepts, dispatches packets |
+| `grevclient/client.go` | Client: prompt loop, directives, file transfer |
+| `grevcore/encryption.go` | Key derivation and AES encrypt/decrypt |
+| `grevcore/headers.go` | The 8-byte packet type tags |
+| `grevcore/processing.go` | Length-prefixed send/receive framing |
+
+---
+
 ## Packet Structure
 
 ### 1. Handshake (plaintext, once per connection)
 
 Both peers generate 16 random bytes, write their own seed, then read the
-peer's. The session key is the XOR of the two seeds and a hardcoded constant
-(`grevcore/encryption.go`).
+peer's. `DeriveKey` (`grevcore/encryption.go:18`) XORs the two seeds with a
+hardcoded constant, so both sides land on the same key without ever sending it.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as client
+    participant S as server
+    C->>C: seed_1 = 16 random bytes
+    S->>S: seed_2 = 16 random bytes
+    C->>S: write seed_1 (unencrypted)
+    S->>S: io.ReadFull 16 bytes -> seed_1
+    S->>C: write seed_2 (unencrypted)
+    C->>C: io.ReadFull 16 bytes -> seed_2
+    Note over C,S: bytewise, over all 16 bytes:<br/>key = seed_1 XOR seed_2 XOR HARDCODED_SEED
 ```
-  client                                        server
-  [16 random bytes: seed_1]  ---------------->  io.ReadFull -> seed_2
-  io.ReadFull -> seed_2     <----------------  [16 random bytes: seed_2]
 
-  key[i] = seed_1[i] ^ seed_2[i] ^ "thisisa16bytekey"
-```
+There is no challenge, no signature, and no verification: whatever arrives in
+those 16 bytes is trusted blindly.
 
 ### 2. Framing
 
-Every message after the handshake is a length-prefixed packet
-(`grevcore/processing.go`). The length counts the ciphertext only and is
-validated against `MaxPacketSize` (0xFFFF) on receipt.
+Every message after the handshake is a length-prefixed frame
+(`grevcore/processing.go`). The length counts the ciphertext only — the IV
+included — and is checked against `MaxPacketSize` (0xFFFF) on receipt.
 
+```mermaid
+packet
+title Frame: every message after the handshake
+0-31: "length (LE uint32): ciphertext byte count"
+32-159: "IV: 16 random bytes, fresh per packet"
+160-287: "AES-CBC ciphertext: PKCS#7-padded body, multiple of 16 B (variable)"
 ```
- 0        4                                          4 + N
- +--------+-------------------------------------------+
- | len    |  ciphertext                               |
- | 4 B LE |  IV (16 B) || AES-CBC(PKCS#7(plaintext))   |
- +--------+-------------------------------------------+
-```
 
-### 3. Plaintext bodies
+### 3. Bodies
 
-The body always starts with an 8-byte ASCII header that selects the operation
-(`grevcore/headers.go`).
+A body always starts with an 8-byte ASCII header that selects the operation
+(`grevcore/headers.go`). Field widths marked *(variable)* are illustrative; only
+the length-prefixed name field is actually read back.
 
-**`GREVEXEC` — client → server, run a shell command**
+**`GREVEXEC` — client → server: run a shell command**
 
-```
-"GREVEXEC" (8 B) | command line, trailing newline included
+```mermaid
+packet
+title Body: GREVEXEC
+0-63: "GREVEXEC"
+64-159: "command line, trailing newline included (variable)"
 ```
 
 The server runs it through `/usr/bin/sh -c`, merges stdout and stderr, and
-replies with **raw output and no header**.
+replies with **raw output and no header** — the client prints it as-is.
 
-**`GREVRCVF` — client → server, upload a file**
+**`GREVRCVF` — client → server: upload a file**
 
-```
-"GREVRCVF" (8 B) | name len (2 B LE) | name | file contents...
+```mermaid
+packet
+title Body: GREVRCVF
+0-63: "GREVRCVF"
+64-79: "name length (LE uint16, n)"
+80-143: "name (n bytes)"
+144-271: "file contents (variable)"
 ```
 
 The server writes the contents to `filepath.Base(name)` with mode `0600` in its
 own working directory. No reply; a failed write ends the session.
 
-**`GREVSNDF` — client → server, download a file**
+**`GREVSNDF` — client → server: download a file**
 
-```
-"GREVSNDF" (8 B) | name len (2 B LE) | name
+```mermaid
+packet
+title Body: GREVSNDF request
+0-63: "GREVSNDF"
+64-79: "name length (LE uint16, n)"
+80-143: "name (n bytes)"
 ```
 
 The server reads the name verbatim — no path filtering — and replies with the
-filename echoed back plus the contents, again **without a header**:
+name echoed back plus the contents, again **without a header**:
 
-```
-name len (2 B LE) | name | file contents...
+```mermaid
+packet
+title Reply: GREVSNDF response
+0-31: "name length (LE uint16, n)"
+32-95: "name (n bytes)"
+96-223: "file contents (variable)"
 ```
 
 The client strips the echoed name and writes `filepath.Base(name)` locally.
 
-**Unknown header — server → client**
-
-A single `?` byte, again with no header.
+**Unknown header — server → client:** a single `?` byte, also with no header.
 
 `/EXIT` is handled entirely client-side: it closes the connection and sends
 nothing.
@@ -129,14 +180,6 @@ go mod download
 go build -o grevshell .            # server / listener
 go build -o client ./grevclient    # client / controller
 go vet ./...
-```
-
-```
-grevshell/
-├── main.go            # server: listen, accept, dispatch packets
-├── grevclient/
-│   └── client.go      # client: prompt loop, directives, file transfer
-└── grevcore/          # shared: encryption.go, headers.go, processing.go
 ```
 
 ---
