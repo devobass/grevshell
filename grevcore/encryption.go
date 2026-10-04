@@ -35,9 +35,7 @@ func DeriveKey(c net.Conn) ([]byte, error) {
 	return key, nil
 }
 
-func AesEncrypt(dataPtr, keyPtr *[]byte) []byte {
-	data := *dataPtr
-	key := *keyPtr
+func AesEncrypt(data, key []byte) []byte {
 	block, err := aes.NewCipher(key)
 	data = pkcs7pad.Pad(data, 16)
 
@@ -56,9 +54,7 @@ func AesEncrypt(dataPtr, keyPtr *[]byte) []byte {
 	return ciphertext
 }
 
-func AesDecrypt(dataPtr, keyPtr *[]byte) []byte {
-	data := *dataPtr
-	key := *keyPtr
+func AesDecrypt(data, key []byte) []byte {
 	iv := data[:aes.BlockSize]
 	ciphertext := data[aes.BlockSize:]
 

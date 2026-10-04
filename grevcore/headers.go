@@ -1,7 +1,9 @@
 package grevcore 
 
-var (
-	FILERECEIVE_HEADER	= "GREVRCVF"
-	FILESEND_HEADER		= "GREVSNDF"
-	SHELLEXEC_HEADER	= "GREVEXEC"
+const (
+	FileReceiveHeader	= "GREVRCVF"
+	FileSendHeader		= "GREVSNDF"
+	ShellExecHeader		= "GREVEXEC"
+	HeaderSize		= 8
+	MaxPacketSize		= 0xFFFF
 )
