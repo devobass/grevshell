@@ -61,7 +61,6 @@ func AesDecrypt(dataPtr, keyPtr *[]byte) []byte {
 	iv := data[:aes.BlockSize]
 	ciphertext := data[aes.BlockSize:]
 
-
 	block, err := aes.NewCipher(key)
 
 	if err != nil {
@@ -71,7 +70,12 @@ func AesDecrypt(dataPtr, keyPtr *[]byte) []byte {
 
 	mode := cipher.NewCBCDecrypter(block, iv)
 	mode.CryptBlocks(ciphertext, ciphertext)
-	data, _ = pkcs7pad.Unpad(data)
+	ciphertext, err = pkcs7pad.Unpad(ciphertext)
+
+	if err != nil {
+		slog.Error("An error occured while unpadding PKCS#7.", slog.Any("ERROR", err))
+		return nil
+	}
 
 	return ciphertext
 }
