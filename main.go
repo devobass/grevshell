@@ -95,7 +95,7 @@ func ExecuteRequest(c net.Conn, key []byte) {
 
 		case grevcore.FileSendHeader:
 			filenameSize	:= binary.LittleEndian.Uint16(received[:2])
-			filename	:= string(received[2:])
+			filename	:= string(received[2:2+filenameSize])
 			data, err	:= os.ReadFile(filename)
 
 			slog.Info("Sending file.", "FILE", filepath.Base(filename))
