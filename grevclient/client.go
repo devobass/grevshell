@@ -36,29 +36,10 @@ func main() {
 	defer stream.Close()
 
 	slog.Info(fmt.Sprintf("Connecting to %s.", stream.RemoteAddr()))
-	key, err := grevcore.DeriveKey(stream)
+	key, err := grevcore.DeriveKey(stream, []byte(C2Password))
 
 	if err != nil {
 		slog.Error("An error occured while deriving the key.", slog.Any("ERROR", err))
-		return
-	}
-
-	err = grevcore.SendPacket(stream, grevcore.Packet{grevcore.AuthHeader, "", []byte(C2Password)}, key)
-
-	if err != nil {
-		slog.Error("An error occured while exchanging authentication.", slog.Any("ERROR", err))
-		return
-	}
-
-	authResponse, err := grevcore.ReceivePacket(stream, key)
-
-	if err != nil {
-		slog.Error("An error occured while receiving authentication.", slog.Any("ERROR", err))
-		return
-	}
-
-	if authResponse.Header == grevcore.AuthFail {
-		slog.Info("Authentication Failed.")
 		return
 	}
 
@@ -71,8 +52,8 @@ func ProcessLoop(c net.Conn, key []byte) {
 	defer c.Close()
 
 	for {
-		var packet grevcore.Packet
 		fmt.Printf("%s - $ ", c.RemoteAddr())
+		var packet grevcore.Packet
 		line, err := send.ReadString('\n')
 
 		if err != nil {
@@ -128,6 +109,7 @@ func ProcessLoop(c net.Conn, key []byte) {
 
 		if err != nil {
 			slog.Error("An error occured while receiving the response.", slog.Any("ERROR", err))
+			return
 		}
 
 		if recv.Data == nil {
