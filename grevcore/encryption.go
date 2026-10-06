@@ -1,7 +1,6 @@
 package grevcore 
 
 import (
-	"log/slog"
 	"fmt"
 	"net"
 	"io"
@@ -21,9 +20,14 @@ func DeriveKey(c net.Conn) ([]byte, error) {
 	key	:= make([]byte, 16)
 
 	rand.Read(seed_1)
-	c.Write(seed_1)
+	_, err := c.Write(seed_1)
 
-	_, err := io.ReadFull(c, seed_2)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to send 16 bytes to connection. Error: %w.", err)
+	}
+
+	_, err = io.ReadFull(c, seed_2)
+
 	if err != nil {
 		return nil, fmt.Errorf("Failed to read 16 bytes from connection. Error: %w.", err)
 	}
@@ -35,13 +39,12 @@ func DeriveKey(c net.Conn) ([]byte, error) {
 	return key, nil
 }
 
-func AesEncrypt(data, key []byte) []byte {
+func AesEncrypt(data, key []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
-	data = pkcs7pad.Pad(data, 16)
+	data = pkcs7pad.Pad(data, aes.BlockSize)
 
 	if err != nil {
-		slog.Error("An error occured while establishing block cipher.", slog.Any("ERROR", err))
-		return nil
+		return nil, err
 	}
 
 	ciphertext := make([]byte, aes.BlockSize + len(data))
@@ -51,18 +54,21 @@ func AesEncrypt(data, key []byte) []byte {
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext[aes.BlockSize:], data)
 
-	return ciphertext
+	return ciphertext, nil
 }
 
-func AesDecrypt(data, key []byte) []byte {
+func AesDecrypt(data, key []byte) ([]byte, error) {
+	if len(data) == 0 || len(data) % aes.BlockSize != 0 {
+		return nil, fmt.Errorf("Invalid data size of %d.", len(data))
+	}
+
 	iv := data[:aes.BlockSize]
 	ciphertext := data[aes.BlockSize:]
 
 	block, err := aes.NewCipher(key)
 
 	if err != nil {
-		slog.Error("An error occured while establishing block cipher in decryption.", slog.Any("ERROR", err))
-		return nil
+		return nil, err
 	}
 
 	mode := cipher.NewCBCDecrypter(block, iv)
@@ -70,11 +76,8 @@ func AesDecrypt(data, key []byte) []byte {
 	ciphertext, err = pkcs7pad.Unpad(ciphertext)
 
 	if err != nil {
-		slog.Error("An error occured while unpadding PKCS#7.", slog.Any("ERROR", err))
-		return nil
+		return nil, err
 	}
 
-	return ciphertext
+	return ciphertext, nil
 }
-
-

@@ -20,4 +20,3 @@ const (
 	FileNameHeaderSize	= 2
 	MaxPacketSize		= 0xFFFF
 )
-
