@@ -7,17 +7,15 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-
+	
+	"golang.org/x/crypto/argon2"
 	"github.com/zenazn/pkcs7pad"
 )
 
-
-var HARDCODED_SEED = []byte("thisisa16bytekey")
-
-func DeriveKey(c net.Conn) ([]byte, error) {
+func DeriveKey(c net.Conn, psk []byte) ([]byte, error) {
 	seed_1	:= make([]byte, 16)
 	seed_2	:= make([]byte, 16)
-	key	:= make([]byte, 16)
+	salt	:= make([]byte, 16)
 
 	rand.Read(seed_1)
 	_, err := c.Write(seed_1)
@@ -32,9 +30,12 @@ func DeriveKey(c net.Conn) ([]byte, error) {
 		return nil, fmt.Errorf("Failed to read 16 bytes from connection. Error: %w.", err)
 	}
 
-	for i := range key {
-		key[i] = seed_1[i] ^ seed_2[i] ^ HARDCODED_SEED[i]
+	for i := range salt {
+		salt[i] = seed_1[i] ^ seed_2[i]
 	}
+
+	// I might be a genius
+	key := argon2.IDKey(psk, salt, 1, 2*1024*1024, 4, 16)
 
 	return key, nil
 }
