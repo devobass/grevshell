@@ -2,46 +2,59 @@ package grevcore
 import ( 
 	"io"
 	"encoding/binary"
-	"log/slog"
+	"fmt"
 )
 
-func ReceivePacket(r io.Reader, key []byte) Packet {
+func ReceivePacket(r io.Reader, key []byte) (Packet, error) {
 	recvSize := make([]byte, 4)	
 
-	io.ReadFull(r, recvSize)
+	_, err := io.ReadFull(r, recvSize)
+
+	if err != nil {
+		return PacketNil, err
+	}
+
 	size := binary.LittleEndian.Uint32(recvSize)
 
 	if size > MaxPacketSize {
-		slog.Error("Packet too large.")
-		return PacketNil
+		return PacketNil, fmt.Errorf("Packet too large. (%d > %d)", size, MaxPacketSize)
 	}
 
 	received := make([]byte, size)
 
-	_, err := io.ReadFull(r, received)
+	_, err = io.ReadFull(r, received)
 
 	if err != nil {
-		slog.Error("An error occured while reading the sent packet.", slog.Any("ERROR", err))
-		return PacketNil
+		return PacketNil, err
 	}
 
 	if len(received) == 0 {
-		return PacketNil
+		return PacketNil, fmt.Errorf("Received packet is empty.")
 	}
 
 	packet := Disassemble(AesDecrypt(received, key))
 
-	return packet
+	return packet, nil
 }
 
-func SendPacket(w io.Writer, p Packet, key []byte) {
+func SendPacket(w io.Writer, p Packet, key []byte) error {
 	sendSize := make([]byte, 4)		
 
 	encryptedData := AesEncrypt(p.Assemble(), key)
 	binary.LittleEndian.PutUint32(sendSize, uint32(len(encryptedData)))
 
-	w.Write(sendSize)
-	w.Write(encryptedData)
+	_, err := w.Write(sendSize)
+	if err != nil {
+		return err
+	}
+
+	_, err = w.Write(encryptedData)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (p *Packet) Assemble() []byte {
