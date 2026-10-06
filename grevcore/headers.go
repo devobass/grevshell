@@ -11,7 +11,9 @@ var (
 )
 
 const (
+	AuthFail		= "GREVFAIL"
 	FileReceiveHeader	= "GREVRCVF"
+	AuthHeader		= "GREVAUTH"
 	FileSendHeader		= "GREVSNDF"
 	ShellExecHeader		= "GREVEXEC"
 	HeaderSize		= 8

