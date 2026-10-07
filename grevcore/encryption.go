@@ -7,12 +7,11 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	
-	"golang.org/x/crypto/argon2"
-	"github.com/zenazn/pkcs7pad"
+	"crypto/pbkdf2"
+	"crypto/sha512"
 )
 
-func DeriveKey(c net.Conn, psk []byte) ([]byte, error) {
+func DeriveKey(c net.Conn, psk string) ([]byte, error) {
 	seed_1	:= make([]byte, 16)
 	seed_2	:= make([]byte, 16)
 	salt	:= make([]byte, 16)
@@ -34,37 +33,45 @@ func DeriveKey(c net.Conn, psk []byte) ([]byte, error) {
 		salt[i] = seed_1[i] ^ seed_2[i]
 	}
 
-	// I might be a genius
-	key := argon2.IDKey(psk, salt, 1, 2*1024*1024, 4, 16)
+	key, err := pbkdf2.Key(sha512.New, psk, salt, 250000, 16)
+
+	if err != nil {
+		return nil, err
+	}
 
 	return key, nil
 }
 
 func AesEncrypt(data, key []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
-	data = pkcs7pad.Pad(data, aes.BlockSize)
 
 	if err != nil {
 		return nil, err
 	}
 
-	ciphertext := make([]byte, aes.BlockSize + len(data))
-	iv := ciphertext[:aes.BlockSize]
-	rand.Read(iv)
+	gcm, err := cipher.NewGCM(block)
+	iv := make([]byte, gcm.NonceSize())
 
-	mode := cipher.NewCBCEncrypter(block, iv)
-	mode.CryptBlocks(ciphertext[aes.BlockSize:], data)
+	_, err = rand.Read(iv)
 
-	return ciphertext, nil
+	if err != nil {
+		return nil, err
+	}
+
+	ciphertext := gcm.Seal(nil, iv, data, nil)
+
+	encrypted := make([]byte, gcm.NonceSize() + len(ciphertext))
+
+	copy(encrypted[:gcm.NonceSize()], iv)
+	copy(encrypted[gcm.NonceSize():], ciphertext)
+
+	return encrypted, nil
 }
 
 func AesDecrypt(data, key []byte) ([]byte, error) {
-	if len(data) == 0 || len(data) % aes.BlockSize != 0 {
-		return nil, fmt.Errorf("Invalid data size of %d.", len(data))
+	if len(data) == 0 || len(data) < 28 {
+		return nil, fmt.Errorf("Invalid AES encrypted block size of %d.", len(data))
 	}
-
-	iv := data[:aes.BlockSize]
-	ciphertext := data[aes.BlockSize:]
 
 	block, err := aes.NewCipher(key)
 
@@ -72,13 +79,20 @@ func AesDecrypt(data, key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	mode := cipher.NewCBCDecrypter(block, iv)
-	mode.CryptBlocks(ciphertext, ciphertext)
-	ciphertext, err = pkcs7pad.Unpad(ciphertext)
+	gcm, err := cipher.NewGCM(block)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return ciphertext, nil
+	iv := data[:gcm.NonceSize()]
+	ciphertext := data[gcm.NonceSize():]
+
+	plaintext, err := gcm.Open(nil, iv, ciphertext, nil)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return plaintext, nil
 }
