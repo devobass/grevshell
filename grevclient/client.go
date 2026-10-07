@@ -103,6 +103,7 @@ func ProcessLoop(c net.Conn, key []byte) {
 
 		if err != nil {
 			slog.Error("An error occured while sending the request.", slog.Any("ERROR", err))
+			continue
 		}
 
 		recv, err := grevcore.ReceivePacket(c, key)
