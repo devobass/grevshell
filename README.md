@@ -1,6 +1,6 @@
 # grevshell
 
-A barebones reverse shell in Go for educational purposes and authorized security testing. A TCP listener executes commands and moves files; a client drives the session over an AES-CBC encrypted channel keyed from a two-way handshake and gated by a shared password. Both sides share one protocol library (`grevcore`).
+A barebones reverse shell in Go for educational purposes and authorized security testing. A TCP listener executes commands and moves files; a client drives the session over an AES-GCM authenticated channel keyed from a two-way handshake and gated by a shared password. Both sides share one protocol library (`grevcore`).
 
 ---
 
@@ -24,7 +24,7 @@ If you are unsure whether a use is authorized or lawful in your jurisdiction, **
 | --- | --- |
 | `main.go` | Server: flags, listener, authentication, packet dispatch |
 | `grevclient/client.go` | Client: flags, authentication, prompt loop, directives |
-| `grevcore/encryption.go` | Key derivation, AES encrypt/decrypt |
+| `grevcore/encryption.go` | PBKDF2-SHA512 key derivation, AES-GCM encrypt/decrypt |
 | `grevcore/headers.go` | `Packet` struct and 8-byte type tags |
 | `grevcore/processing.go` | Length-prefixed send/receive, `Assemble`/`Disassemble` |
 
@@ -34,13 +34,13 @@ Every wire message is a `grevcore.Packet` — header tag, filename, payload. The
 
 ## Protocol
 
-**Handshake (plaintext, once):** Both peers generate 16 random bytes, exchange them, XOR together with a hardcoded seed, then derive the AES key via Argon2id.
+**Handshake (plaintext, once):** Both peers generate 16 random bytes, exchange them, then XOR the two together to form a 16-byte salt. The shared password is run through PBKDF2-SHA512 (250,000 iterations) with that salt to derive a 16-byte AES key. A wrong password yields a different key, so no packet can be decrypted or authenticated — the password is no longer compared as a plaintext string.
 
-**Framing:** After handshake, every message is length-prefixed (4-byte LE uint32), IV (16 bytes), AES-CBC ciphertext (PKCS#7 padded). Max packet size: 64 KiB.
+**Framing:** After handshake, every message is length-prefixed (4-byte LE uint32), nonce (12 bytes, GCM default), then AES-GCM ciphertext (which includes the authentication tag). Max packet size: 64 KiB (`0xFFFF`).
 
 **Packet Body:** 8-byte header tag + 2-byte filename length + filename + payload.
 
-Headers: `GREVEXEC` (run command), `GREVRCVF` (upload file), `GREVSNDF` (download file), `GREVAUTH` (password).
+Headers: `GREVEXEC` (run command), `GREVRCVF` (upload file), `GREVSNDF` (download file), `GREVAUTH` (legacy, unused).
 
 ---
 
@@ -76,15 +76,27 @@ Directives: `/SEND <path>`, `/GET <path>`, `/CANCEL`, `/EXIT`. Everything else e
 
 Teaching implementation, not a production implant.
 
-- **Hardcoded key material** — observed handshake = reconstructed session key. CBC without MAC is malleable.
-- **Password is optional gate** — omitting `-k` makes listener wide open on `0.0.0.0`.
-- **Auth failures leak connections** — rejected clients not closed; malformed handshake kills listener.
+- **Unauthenticated handshake** — the 16-byte salt is sent in the clear, so an observer can mount an offline dictionary attack against the password.
 - **Arbitrary file access** — `/GET` reads any readable path; `/SEND` overwrites files in server's cwd.
 - **No chunking** — files >64 KiB cannot be transferred.
 - **Single-threaded** — one session at a time.
 - **Text mode only** — no interactive programs or job control.
 
-Hardening: mutual auth, KDF over password, ECDH, AES-GCM, close rejected connections, chunked transfers, command allow-listing.
+AES-GCM now authenticates each message, so ciphertext tampering is detected and a bad password cannot send packets. The accept loop survives failed connections (they are closed and skipped).
+
+Hardening: mutual authentication, ECDH key agreement, chunked transfers, command allow-listing.
+
+---
+
+## TODO
+
+- [x] File download/upload (`/GET` and `/SEND`).
+- [x] Length-prefixed filenames instead of a fixed 32-byte field.
+- [x] Explicit `/EXIT` to end a session.
+- [X] Authentication.
+- [x] Real cryptography.
+- [ ] Secure key exchange.
+- [ ] Chunk large files instead of one packet per file.
 
 ---
 
