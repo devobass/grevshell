@@ -16,9 +16,6 @@ func ReceivePacket(r io.Reader, key []byte) (Packet, error) {
 
 	size := binary.LittleEndian.Uint32(recvSize)
 
-	if size > MaxPacketSize {
-		return PacketNil, fmt.Errorf("Packet too large. (%d > %d)", size, MaxPacketSize)
-	}
 
 	received := make([]byte, size)
 
@@ -50,9 +47,14 @@ func ReceivePacket(r io.Reader, key []byte) (Packet, error) {
 func SendPacket(w io.Writer, p Packet, key []byte) error {
 	sendSize := make([]byte, 4)		
 
+
 	encryptedData, err := AesEncrypt(p.Assemble(), key)
 	if err != nil {
 		return err
+	}
+
+	if len(encryptedData) > MaxPacketSize {
+		return fmt.Errorf("Packet too large. (%d > %d)", len(encryptedData), MaxPacketSize)
 	}
 
 	binary.LittleEndian.PutUint32(sendSize, uint32(len(encryptedData)))

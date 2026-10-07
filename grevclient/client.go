@@ -109,11 +109,11 @@ func ProcessLoop(c net.Conn, key []byte) {
 
 		if err != nil {
 			slog.Error("An error occured while receiving the response.", slog.Any("ERROR", err))
-			return
+			continue
 		}
 
 		if recv.Data == nil {
-			return
+			continue
 		}
 
 		switch recv.Header {

