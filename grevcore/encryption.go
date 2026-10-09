@@ -4,42 +4,83 @@ import (
 	"fmt"
 	"net"
 	"io"
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/pbkdf2"
 	"crypto/sha512"
+	"crypto/hkdf"
+	"crypto/ecdh"
 )
 
-func DeriveKey(c net.Conn, psk string) ([]byte, error) {
-	seed_1	:= make([]byte, 16)
-	seed_2	:= make([]byte, 16)
-	salt	:= make([]byte, 16)
+func ExchangeKey(c net.Conn, psk string) ([]byte, error) {
+	curve := ecdh.X25519()
 
-	rand.Read(seed_1)
-	_, err := c.Write(seed_1)
-
-	if err != nil {
-		return nil, fmt.Errorf("Failed to send 16 bytes to connection. Error: %w.", err)
-	}
-
-	_, err = io.ReadFull(c, seed_2)
-
-	if err != nil {
-		return nil, fmt.Errorf("Failed to read 16 bytes from connection. Error: %w.", err)
-	}
-
-	for i := range salt {
-		salt[i] = seed_1[i] ^ seed_2[i]
-	}
-
-	key, err := pbkdf2.Key(sha512.New, psk, salt, 250000, 16)
+	private, err := curve.GenerateKey(rand.Reader)
 
 	if err != nil {
 		return nil, err
 	}
 
+	public := private.PublicKey()
+	_, err = c.Write(public.Bytes())
+
+	if err != nil {
+		return nil, err
+	}
+
+	remote := make([]byte, 32)
+
+	_, err = io.ReadFull(c, remote)
+
+	if err != nil {
+		return nil, err
+	}
+
+	remotePublicKey, err := curve.NewPublicKey(remote)
+
+	if err != nil {
+		return nil, err
+	}
+
+	shared, err := private.ECDH(remotePublicKey)
+
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := hkdf.Key(sha512.New, shared, []byte(psk), "", 16)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if ! KeysMatch(c, key) {
+		return nil, fmt.Errorf("Keys do not match.")
+	}
+
 	return key, nil
+}
+
+func KeysMatch(c net.Conn, key []byte) bool {
+	recvHash := make([]byte, sha512.Size)
+
+	hash := sha512.Sum512(key)
+	derivedHash := hash[:]
+
+	_, err := c.Write(derivedHash)
+
+	if err != nil {
+		return false
+	}
+
+	_, err = io.ReadFull(c, recvHash)
+
+	if err != nil {
+		return false
+	}
+
+	return bytes.Equal(recvHash, derivedHash)
 }
 
 func AesEncrypt(data, key []byte) ([]byte, error) {
@@ -50,6 +91,11 @@ func AesEncrypt(data, key []byte) ([]byte, error) {
 	}
 
 	gcm, err := cipher.NewGCM(block)
+
+	if err != nil {
+		return nil, err
+	}
+
 	iv := make([]byte, gcm.NonceSize())
 
 	_, err = rand.Read(iv)
@@ -69,10 +115,6 @@ func AesEncrypt(data, key []byte) ([]byte, error) {
 }
 
 func AesDecrypt(data, key []byte) ([]byte, error) {
-	if len(data) == 0 || len(data) < 28 {
-		return nil, fmt.Errorf("Invalid AES encrypted block size of %d.", len(data))
-	}
-
 	block, err := aes.NewCipher(key)
 
 	if err != nil {
@@ -83,6 +125,10 @@ func AesDecrypt(data, key []byte) ([]byte, error) {
 
 	if err != nil {
 		return nil, err
+	}
+
+	if len(data) == 0 || len(data) < gcm.NonceSize() {
+		return nil, fmt.Errorf("Invalid AES encrypted block size of %d.", len(data))
 	}
 
 	iv := data[:gcm.NonceSize()]
