@@ -1,6 +1,8 @@
 # grevshell
 
-A barebones reverse shell in Go for educational purposes and authorized security testing. A TCP listener executes commands and moves files; a client drives the session over an AES-GCM authenticated channel keyed from a two-way handshake and gated by a shared password. Both sides share one protocol library (`grevcore`).
+A barebones, educational reverse shell written in Go. A TCP server executes commands and moves files; a client drives the session through an authenticated, encrypted channel. Both sides share one protocol library (`grevcore`).
+
+> **PoC for the Malware Engineering course at UIT. Intended for isolated labs and authorized testing only.**
 
 ---
 
@@ -18,40 +20,69 @@ If you are unsure whether a use is authorized or lawful in your jurisdiction, **
 
 ---
 
-## Structure
+## Layout
 
 | Path | Role |
 | --- | --- |
-| `main.go` | Server: flags, listener, authentication, packet dispatch |
-| `grevclient/client.go` | Client: flags, authentication, prompt loop, directives |
-| `grevcore/encryption.go` | PBKDF2-SHA512 key derivation, AES-GCM encrypt/decrypt |
-| `grevcore/headers.go` | `Packet` struct and 8-byte type tags |
+| `main.go` | Server: flags, TCP listener, key exchange, packet dispatch, command execution |
+| `grevclient/client.go` | Client: flags, key exchange, prompt loop, directives |
+| `grevcore/encryption.go` | X25519 ECDH, HKDF-SHA512 key derivation, key confirmation, AES-GCM |
+| `grevcore/headers.go` | `Packet` struct, header tags, size constants |
 | `grevcore/processing.go` | Length-prefixed send/receive, `Assemble`/`Disassemble` |
-
-Every wire message is a `grevcore.Packet` — header tag, filename, payload. The filename field is empty for non-file packets.
 
 ---
 
 ## Protocol
 
-**Handshake (plaintext, once):** Both peers generate 16 random bytes, exchange them, then XOR the two together to form a 16-byte salt. The shared password is run through PBKDF2-SHA512 (250,000 iterations) with that salt to derive a 16-byte AES key. A wrong password yields a different key, so no packet can be decrypted or authenticated — the password is no longer compared as a plaintext string.
+### 1. Key exchange (plaintext, once)
 
-**Framing:** After handshake, every message is length-prefixed (4-byte LE uint32), nonce (12 bytes, GCM default), then AES-GCM ciphertext (which includes the authentication tag). Max packet size: 64 KiB (`0xFFFF`).
+Both peers run `ExchangeKey` symmetrically:
 
-**Packet Body:** 8-byte header tag + 2-byte filename length + filename + payload.
+1. Each side generates an ephemeral **X25519** key pair and sends its 32-byte public key.
+2. Each computes the shared secret with its private key and the peer's public key.
+3. The shared secret is run through **HKDF-SHA512**, using the shared password `psk` as the salt, to derive a **16-byte AES key**.
+4. Each side sends `SHA-512(key)` and compares it with the hash received from the peer (`KeysMatch`). A mismatch — e.g. a wrong password — aborts the session.
 
-Headers: `GREVEXEC` (run command), `GREVRCVF` (upload file), `GREVSNDF` (download file), `GREVAUTH` (legacy, unused).
+The password is never sent over the wire. It is mixed into the KDF, so an attacker without it derives a different key and cannot pass confirmation.
+
+### 2. Framing
+
+After the handshake every message is a 4-byte little-endian length followed by the AES-GCM blob:
+
+```mermaid
+packet
+0-3: "Length (LE uint32, 4 B)"
+4-15: "Nonce (12 B)"
+16-47: "Ciphertext (variable)"
+48-63: "GCM tag (16 B)"
+```
+
+AES-GCM output is laid out as `12-byte nonce || ciphertext || 16-byte tag`. The encrypted blob is capped at **65535 bytes** (`MaxPacketSize`); longer packets are rejected.
+
+### 3. Packet body
+
+The plaintext inside the AES-GCM blob is:
+
+```mermaid
+packet
+0-7: "Header (8 B)"
+8-9: "Filename length (LE uint16, 2 B)"
+10-25: "Filename (variable)"
+26-41: "Payload (variable)"
+```
+
+Headers: `GREVEXEC` (run a command), `GREVRCVF` (file upload, server receives), `GREVSNDF` (file download, server sends). The filename field is empty for command packets.
 
 ---
 
 ## Build
 
-Requires Go 1.27+ and POSIX host (server executes `/usr/bin/sh`).
+Requires **Go 1.27+** on a POSIX host (the server shells out to `/usr/bin/sh`).
 
 ```bash
 go mod download
-go build -o grevshell .            # server
-go build -o client ./grevclient    # client
+go build -o grevshell .             # server
+go build -o client ./grevclient     # client
 go vet ./...
 ```
 
@@ -62,41 +93,57 @@ go vet ./...
 | Flag | Binary | Default | Meaning |
 | --- | --- | --- | --- |
 | `-p` | both | `9999` | Port |
-| `-k` | both | *(empty)* | Auth password |
+| `-k` | both | `password123` | Shared authentication password |
 | `-h` | client | `localhost` | Server address |
 
-**Server:** `./grevshell -k hunter2`
-**Client:** `./client -k hunter2`
+The server binds `0.0.0.0`; the client connects to `-h`:`-p`.
 
-Directives: `/SEND <path>`, `/GET <path>`, `/CANCEL`, `/EXIT`. Everything else executes on the server.
+```bash
+# server (victim side)
+./grevshell -k hunter2
+
+# client (operator side)
+./client -h 10.0.0.5 -k hunter2
+```
+
+At the `client` prompt:
+
+| Directive | Effect |
+| --- | --- |
+| `/SEND <path>` | Upload a local file to the server's working directory |
+| `/GET <path>` | Download a file from the server to the client's working directory |
+| `/EXIT` | Close the session |
+| *(anything else)* | Executed on the server via `/usr/bin/sh -c` |
+
+Received files are written using only the base name, with mode `0600`, into the current directory.
 
 ---
 
 ## Security Notes
 
-Teaching implementation, not a production implant.
+Teaching implementation, **not** a hardened or stealthy implant.
 
-- **Unauthenticated handshake** — the 16-byte salt is sent in the clear, so an observer can mount an offline dictionary attack against the password.
-- **Arbitrary file access** — `/GET` reads any readable path; `/SEND` overwrites files in server's cwd.
-- **No chunking** — files >64 KiB cannot be transferred.
-- **Single-threaded** — one session at a time.
-- **Text mode only** — no interactive programs or job control.
+- **Key confirmation is plaintext.** `KeysMatch` sends `SHA-512(key)` in the clear, exposing a hash of the session key and allowing it to be replayed. An active man-in-the-middle cannot derive the real key without the password, but the confirmation step itself is not protected.
+- **No chunking.** The 64 KiB packet cap limits command output and file transfers.
+- **Arbitrary file access.** `/GET` reads any path the server process can read; `/SEND` overwrites any writable path relative to the server's cwd. Paths are reduced to their base name on write, but traversal on read is unrestricted.
+- **Single session.** The accept loop handles one client at a time; `ExecuteRequest` blocks until that connection ends.
+- **No TTY / job control.** Commands run non-interactively with stdout and stderr merged; interactive programs will not behave as expected.
+- **No process detachment.** The server is a normal foreground process with no persistence or evasion.
 
-AES-GCM now authenticates each message, so ciphertext tampering is detected and a bad password cannot send packets. The accept loop survives failed connections (they are closed and skipped).
-
-Hardening: mutual authentication, ECDH key agreement, chunked transfers, command allow-listing.
+Possible hardening (not implemented): command allow-listing, mutual authentication tied to the key confirmation, chunked transfers, per-connection goroutines, and a PTY wrapper.
 
 ---
 
 ## TODO
 
-- [x] File download/upload (`/GET` and `/SEND`).
-- [x] Length-prefixed filenames instead of a fixed 32-byte field.
-- [x] Explicit `/EXIT` to end a session.
-- [X] Authentication.
-- [x] Real cryptography.
-- [ ] Secure key exchange.
+- [x] Authentication.
+- [x] Real cryptography (AES-GCM).
+- [x] Authenticated key exchange (X25519 + HKDF-SHA512).
+- [x] File upload/download (`/SEND`, `/GET`).
+- [x] Length-prefixed filenames.
+- [x] Explicit `/EXIT`.
 - [ ] Chunk large files instead of one packet per file.
+- [ ] Handle concurrent sessions.
 
 ---
 
