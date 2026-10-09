@@ -15,7 +15,10 @@ func ReceivePacket(r io.Reader, key []byte) (Packet, error) {
 	}
 
 	size := binary.LittleEndian.Uint32(recvSize)
-
+	
+	if size > MaxPacketSize {
+		return PacketNil, fmt.Errorf("Packet too large. (%d > %d)", size, MaxPacketSize)
+	}
 
 	received := make([]byte, size)
 
@@ -47,7 +50,6 @@ func ReceivePacket(r io.Reader, key []byte) (Packet, error) {
 func SendPacket(w io.Writer, p Packet, key []byte) error {
 	sendSize := make([]byte, 4)		
 
-
 	encryptedData, err := AesEncrypt(p.Assemble(), key)
 	if err != nil {
 		return err
@@ -77,6 +79,7 @@ func (p *Packet) Assemble() []byte {
 	packet := make([]byte, HeaderSize + FileNameHeaderSize + len(p.FileName) + len(p.Data))
 
 	copy(packet[:HeaderSize], []byte(p.Header))
+	
 	binary.LittleEndian.PutUint16(packet[HeaderSize:HeaderSize + FileNameHeaderSize], uint16(len(p.FileName)))
 	copy(packet[HeaderSize + FileNameHeaderSize:HeaderSize + FileNameHeaderSize + len(p.FileName)], []byte(p.FileName))
 	copy(packet[HeaderSize + FileNameHeaderSize + len(p.FileName):], p.Data)
@@ -85,7 +88,7 @@ func (p *Packet) Assemble() []byte {
 }
 
 func Disassemble(b []byte) (Packet, error) {
-	if len(b) < HeaderSize + FileNameHeaderSize || len(b) > MaxPacketSize {
+	if len(b) < HeaderSize + FileNameHeaderSize {
 		return PacketNil, fmt.Errorf("Invalid packet size of %d.", len(b))
 	}
 
