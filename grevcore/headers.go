@@ -12,7 +12,6 @@ var (
 
 const (
 	FileReceiveHeader	= "GREVRCVF"
-	AuthHeader		= "GREVAUTH"
 	FileSendHeader		= "GREVSNDF"
 	ShellExecHeader		= "GREVEXEC"
 	HeaderSize		= 8
