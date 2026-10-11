@@ -39,7 +39,7 @@ func main() {
 	key, err := grevcore.ExchangeKey(stream, C2Password)
 
 	if err != nil {
-		slog.Error("An error occured while deriving the key.", slog.Any("ERROR", err))
+		slog.Error("An error occured while exchanging the key.", slog.Any("ERROR", err))
 		return
 	}
 

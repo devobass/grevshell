@@ -11,13 +11,13 @@ func ReceivePacket(r io.Reader, key []byte) (Packet, error) {
 	_, err := io.ReadFull(r, recvSize)
 
 	if err != nil {
-		return PacketNil, err
+		return PacketNil, fmt.Errorf("an error occured while trying to read the packet size, err=%w", err)
 	}
 
 	size := binary.LittleEndian.Uint32(recvSize)
 	
 	if size > MaxPacketSize {
-		return PacketNil, fmt.Errorf("Packet too large. (%d > %d)", size, MaxPacketSize)
+		return PacketNil, fmt.Errorf("packet too large. (%d > %d)", size, MaxPacketSize)
 	}
 
 	received := make([]byte, size)
@@ -25,23 +25,23 @@ func ReceivePacket(r io.Reader, key []byte) (Packet, error) {
 	_, err = io.ReadFull(r, received)
 
 	if err != nil {
-		return PacketNil, err
+		return PacketNil, fmt.Errorf("an error occured while trying to receive the packet, err=%w", err)
 	}
 
 	if len(received) == 0 {
-		return PacketNil, fmt.Errorf("Received packet is empty.")
+		return PacketNil, fmt.Errorf("received packet is empty.")
 	}
 
 	packet, err := AesDecrypt(received, key)
 
 	if err != nil {
-		return PacketNil, err
+		return PacketNil, fmt.Errorf("an error occured while trying to decrypt the packet, err=%w", err)
 	}
 
 	p, err := Disassemble(packet)
 
 	if err != nil {
-		return PacketNil, err
+		return PacketNil, fmt.Errorf("an error occured while trying to disassemble the packet size, err=%w", err)
 	}
 
 	return p, nil
@@ -52,7 +52,7 @@ func SendPacket(w io.Writer, p Packet, key []byte) error {
 
 	encryptedData, err := AesEncrypt(p.Assemble(), key)
 	if err != nil {
-		return err
+		return fmt.Errorf("an error occured while trying to encrypt the packet, err=%w", err)
 	}
 
 	if len(encryptedData) > MaxPacketSize {
@@ -63,13 +63,13 @@ func SendPacket(w io.Writer, p Packet, key []byte) error {
 
 	_, err = w.Write(sendSize)
 	if err != nil {
-		return err
+		return fmt.Errorf("an error occured while trying to send the packet size, err=%w", err)
 	}
 
 	_, err = w.Write(encryptedData)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("an error occured while trying to read the encrypted packet, err=%w", err)
 	}
 
 	return nil
@@ -89,7 +89,7 @@ func (p *Packet) Assemble() []byte {
 
 func Disassemble(b []byte) (Packet, error) {
 	if len(b) < HeaderSize + FileNameHeaderSize {
-		return PacketNil, fmt.Errorf("Invalid packet size of %d.", len(b))
+		return PacketNil, fmt.Errorf("invalid packet size of %d.", len(b))
 	}
 
 	var p Packet
@@ -97,7 +97,7 @@ func Disassemble(b []byte) (Packet, error) {
 
 	n := int(binary.LittleEndian.Uint16(b[HeaderSize : HeaderSize+FileNameHeaderSize]))
 	if n > len(b) - HeaderSize - FileNameHeaderSize {
-		return PacketNil, fmt.Errorf("Invalid header size of %d.", n)
+		return PacketNil, fmt.Errorf("invalid header size of %d.", n)
 	}
 
 	p.FileName = string(b[HeaderSize + FileNameHeaderSize:HeaderSize + FileNameHeaderSize + n])
