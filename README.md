@@ -40,10 +40,10 @@ Both peers run `ExchangeKey` symmetrically:
 
 1. Each side generates an ephemeral **X25519** key pair and sends its 32-byte public key.
 2. Each computes the shared secret with its private key and the peer's public key.
-3. The shared secret is run through **HKDF-SHA512**, using the shared password `psk` as the salt, to derive a **16-byte AES key**.
-4. Each side sends `SHA-512(key)` and compares it with the hash received from the peer (`KeysMatch`). A mismatch — e.g. a wrong password — aborts the session.
+3. The shared secret is run through **HKDF-SHA512**, using the shared password `psk` as the salt, to derive a **32-byte AES-256 key**.
+4. Each side confirms the key with `KeysMatch`: it sends `HMAC(key, peer_pubkey)` and verifies the peer sent `HMAC(key, own_pubkey)` with a constant-time compare. The MAC is keyed by the derived session key and binds both public keys, so only a peer that derived the same key — i.e. that knows the password — can pass. A mismatch aborts the session.
 
-The password is never sent over the wire. It is mixed into the KDF, so an attacker without it derives a different key and cannot pass confirmation.
+The password is never sent over the wire. It is mixed into the KDF, so an attacker without it derives a different key and cannot produce a valid confirmation. The password must be non-empty: with an empty `psk` the salt is empty and any peer that completes the ECDH derives the same key.
 
 ### 2. Framing
 
@@ -123,14 +123,17 @@ Received files are written using only the base name, with mode `0600`, into the 
 
 Teaching implementation, **not** a hardened or stealthy implant.
 
-- **Key confirmation is plaintext.** `KeysMatch` sends `SHA-512(key)` in the clear, exposing a hash of the session key and allowing it to be replayed. An active man-in-the-middle cannot derive the real key without the password, but the confirmation step itself is not protected.
+- **Key confirmation is a cleartext MAC.** `KeysMatch` sends `HMAC(key, peer_pubkey)` unencrypted. It proves possession of the derived key (and hence the password), but it is a MAC over public values, not a signature, so it establishes no identity beyond the shared password.
+- **No replay protection.** Each message is an independent AES-GCM blob with a random nonce and no sequence number, so a recorded packet can be replayed and will decrypt and be accepted again — for a command channel, that re-runs the command.
+- **Weak KDF parameters.** The password is used directly as the HKDF salt and the `info` field is empty, so the derivation is not domain-separated.
+- **Password strength is on the operator.** A short or guessable `-k` weakens the whole channel; an empty password removes authentication entirely.
 - **No chunking.** The 64 KiB packet cap limits command output and file transfers.
 - **Arbitrary file access.** `/GET` reads any path the server process can read; `/SEND` overwrites any writable path relative to the server's cwd. Paths are reduced to their base name on write, but traversal on read is unrestricted.
 - **Single session.** The accept loop handles one client at a time; `ExecuteRequest` blocks until that connection ends.
 - **No TTY / job control.** Commands run non-interactively with stdout and stderr merged; interactive programs will not behave as expected.
 - **No process detachment.** The server is a normal foreground process with no persistence or evasion.
 
-Possible hardening (not implemented): command allow-listing, mutual authentication tied to the key confirmation, chunked transfers, per-connection goroutines, and a PTY wrapper.
+Possible hardening (not implemented): command allow-listing, replay protection (per-direction sequence numbers in the GCM AAD), a random HKDF salt with a domain-separating `info`, chunked transfers, per-connection goroutines, and a PTY wrapper.
 
 ---
 
